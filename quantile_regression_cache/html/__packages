@@ -1,0 +1,10 @@
+base
+knitr
+SparseM
+quantreg
+bayesQR
+coda
+rjags
+Rcpp
+ggplot2
+rstan
