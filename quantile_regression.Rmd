@@ -1,0 +1,174 @@
+---
+title: "Quantile Regression with `R`/`Stan`/`JAGS`"
+output: html_document
+---
+
+```{r, echo=FALSE, message=FALSE, error=FALSE}
+library(knitr)
+knitr::opts_chunk$set(
+  collapse = TRUE
+)
+```
+
+
+
+### Data
+A quick data generating mechanism
+```{r}
+# Set-up the data generating mechainsm
+set.seed(666)
+N     <- 500
+x     <- runif(N, max=10)
+alpha <- 1
+beta  <- 2
+y     <- alpha + beta * x + rnorm(N, sd = .6 * x)
+p     <- 0.95
+
+# The dataset to be used for estiamtion
+data_set   <- list(y = y, x = x, p = p)
+data_frame <- as.data.frame(data_set)[-3]
+
+```
+
+
+### Quantile Regression with the `quantreg` package in `R`
+This fits pretty much instantaneously, and gets answers that look about right (alpha of about 1, beta of about 2.9).
+```{r}
+library(quantreg)
+qreg_fit <- rq(y ~ x, data = data_frame, tau = p)
+# (setting ci = TRUE seems to choke it for some reason)
+ 
+# See results
+summary(qreg_fit)
+```
+
+
+### Quantile Regression with the `bayesQR` package in `R`
+This fits pretty much instantaneously, and seems to get sensible answers too.
+```{r}
+library(bayesQR)
+sink(file="/dev/null") # Supress calls to cat(), for now
+bqr_fit <- bayesQR(y ~ x, data = data_frame, quantile = p, ndraw = 10000)
+sink()
+
+# See results
+(bqr_summary <- summary(bqr_fit))
+```
+
+
+### Quantile Regression in `JAGS`
+
+```{r}
+# Adapted from http://stats.stackexchange.com/q/17672
+library(rjags)
+
+jags_code <- "
+  model{
+    for(i in 1:length(y)){
+      mu[i] <- alpha + beta * x[i]
+      w[i]  ~ dexp(tau)
+      me[i] <- (1 - 2 * p) / (p * (1 - p)) * w[i] + mu[i]
+      pe[i] <- (p * (1 - p) * tau) / (2 * w[i])
+      y[i]  ~ dnorm(me[i], pe[i])
+    }
+    
+    # Regression Priors
+    alpha ~ dnorm(0, 1E-6)
+    beta  ~ dnorm(0, 1E-6)
+    
+    lsigma ~ dunif(-5, 15)
+    sigma  <- exp(lsigma / 2)
+    tau    <- pow(sigma, -2)
+  }
+"
+
+# Init the model
+n_iter <- 10000
+jags_model <- jags.model(file = textConnection(jags_code), data = data_set, 
+                       n.chains = 4, n.adapt = n_iter / 2)
+
+# Run some MCMC iterations
+params <- c("alpha", "beta", "sigma")
+jags_samples <- coda.samples(jags_model, params, n.iter = n_iter)
+
+# Results
+t(apply(
+  data.frame(do.call(rbind, jags_samples)), 2, function(x)
+    c(mean = mean(x), quantile(x, c(0.005, 0.25, 0.5, 0.75, 0.95)))
+))
+
+
+```
+
+
+### Quantile Regression in `Stan`
+
+Note: This took approximately minutes to run on 4 Intel i7 threads (12GB RAM).
+
+```{r}
+library(rstan)
+options(mc.cores = parallel::detectCores())
+
+# This appears to be taken from the lower equation on page 5 of 
+# http://bura.brunel.ac.uk/bitstream/2438/3593/1/fulltext.pdf
+
+# The results of this look 'about right', but it takes approximately 40 minutes 
+# with 1k iterations (and does not converge)
+scode <- "
+data {
+  int<lower=0> N;
+  real<lower=0, upper=1> p;
+  vector[N] x;
+  vector[N] y;
+}
+parameters {
+  real alpha;
+  real beta;
+  real<lower=0.001, upper=10> sigma;
+  vector[N] w;
+}
+transformed parameters {
+  real<lower=0> tau;
+  vector[N] mu;
+  vector[N] me;
+  vector[N] pe;
+
+  tau <- pow(sigma, -2);
+  mu  <- alpha + beta * x;
+  me  <- (1 - 2 * p) / (p * (1 - p)) * w + mu;
+  pe  <- (p * (1 - p) * tau) ./ (2 * w);
+}
+model {
+  # Priors
+  alpha ~ normal(0, 100);
+  beta  ~ normal(0, 100);
+  sigma ~ cauchy(0, 2.5);
+
+  # Data Augmentation
+  w     ~ exponential(tau);
+  
+  # The model
+  y     ~ normal(me, pe);
+}
+"
+
+init_fun <- function(){
+  list(alpha = 1 + rnorm(1, 0, 0.2), beta = 2.88 + rnorm(1, 0, 0.2), 
+       sigma = runif(1, 0, 5), w = rexp(N, runif(N, 0, 4)))
+}
+
+sink(file="/dev/null") # Supress calls to cat(), for now
+stan_fit <- stan(model_code = scode, data = within(data_set, N <- N), 
+                 iter = n_iter, verbose = FALSE, 
+                 pars = params, init = init_fun)
+sink()
+
+print(stan_fit)
+
+```
+
+
+# Session Info
+```{r}
+sessionInfo()
+```
