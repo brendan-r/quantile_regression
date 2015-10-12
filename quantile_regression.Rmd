@@ -6,10 +6,10 @@ output: html_document
 ```{r, echo=FALSE, message=FALSE, error=FALSE}
 library(knitr)
 knitr::opts_chunk$set(
-  collapse = TRUE
+  collapse = TRUE,
+  cache = TRUE
 )
 ```
-
 
 
 ### Data
@@ -103,17 +103,10 @@ t(apply(
 
 ### Quantile Regression in `Stan`
 
-Note: This took approximately minutes to run on 4 Intel i7 threads (12GB RAM).
-
 ```{r}
 library(rstan)
 options(mc.cores = parallel::detectCores())
 
-# This appears to be taken from the lower equation on page 5 of 
-# http://bura.brunel.ac.uk/bitstream/2438/3593/1/fulltext.pdf
-
-# The results of this look 'about right', but it takes approximately 40 minutes 
-# with 1k iterations (and does not converge)
 scode <- "
 data {
   int<lower=0> N;
