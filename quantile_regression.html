@@ -184,9 +184,6 @@ sink()
 <h3>Quantile Regression in <code>JAGS</code></h3>
 <pre class="r"><code># Adapted from http://stats.stackexchange.com/q/17672
 library(rjags)
-## Loading required package: coda
-## Linked to JAGS 3.4.0
-## Loaded modules: basemod,bugs
 
 jags_code &lt;- &quot;
   model{
@@ -228,26 +225,14 @@ t(apply(
   data.frame(do.call(rbind, jags_samples)), 2, function(x)
     c(mean = mean(x), quantile(x, c(0.005, 0.25, 0.5, 0.75, 0.95)))
 ))
-##            mean      0.5%       25%       50%       75%       95%
-## alpha 1.0832887 0.8786629 1.0113303 1.0659839 1.1336603 1.2837482
-## beta  2.8868376 2.7988041 2.8637828 2.8844575 2.9078761 2.9503504
-## sigma 0.5501318 0.5193842 0.5416371 0.5500131 0.5583468 0.5709816</code></pre>
+##            mean      0.5%       25%      50%       75%       95%
+## alpha 1.0824410 0.8732152 1.0099762 1.066288 1.1363847 1.2799307
+## beta  2.8882857 2.7991278 2.8642738 2.884969 2.9104886 2.9541419
+## sigma 0.5502045 0.5194068 0.5417685 0.550057 0.5583782 0.5708294</code></pre>
 </div>
 <div id="quantile-regression-in-stan" class="section level3">
 <h3>Quantile Regression in <code>Stan</code></h3>
 <pre class="r"><code>library(rstan)
-## Loading required package: Rcpp
-## Loading required package: ggplot2
-## rstan (Version 2.8.0, packaged: 2015-09-19 14:48:38 UTC, GitRev: 05c3d0058b6a)
-## For execution on a local, multicore CPU with excess RAM we recommend calling
-## rstan_options(auto_write = TRUE)
-## options(mc.cores = parallel::detectCores())
-## 
-## Attaching package: 'rstan'
-## 
-## The following object is masked from 'package:coda':
-## 
-##     traceplot
 options(mc.cores = parallel::detectCores())
 
 scode &lt;- &quot;
@@ -260,31 +245,35 @@ data {
 parameters {
   real alpha;
   real beta;
-  real&lt;lower=0.001, upper=10&gt; sigma;
-  vector[N] w;
+  real&lt;lower=0&gt; sigma;
+  vector&lt;lower=0&gt;[N] w;
 }
 transformed parameters {
   real&lt;lower=0&gt; tau;
   vector[N] mu;
   vector[N] me;
   vector[N] pe;
+  vector[N] pe2;
 
   tau &lt;- pow(sigma, -2);
   mu  &lt;- alpha + beta * x;
   me  &lt;- (1 - 2 * p) / (p * (1 - p)) * w + mu;
   pe  &lt;- (p * (1 - p) * tau) ./ (2 * w);
+  
+  for(n in 1:N)
+    pe2[n] &lt;- inv_sqrt(pe[n]);
 }
 model {
   # Priors
-  alpha ~ normal(0, 100);
-  beta  ~ normal(0, 100);
+  alpha ~ normal(0, 2);
+  beta  ~ normal(0, 2);
   sigma ~ cauchy(0, 2.5);
 
   # Data Augmentation
   w     ~ exponential(tau);
   
   # The model
-  y     ~ normal(me, pe);
+  y     ~ normal(me, pe2);
 }
 &quot;
 
@@ -293,34 +282,31 @@ init_fun &lt;- function(){
        sigma = runif(1, 0, 5), w = rexp(N, runif(N, 0, 4)))
 }
 
-sink(file=&quot;/dev/null&quot;) # Supress calls to cat(), for now
+params &lt;- c(&quot;alpha&quot;, &quot;beta&quot;, &quot;sigma&quot;)
 stan_fit &lt;- stan(model_code = scode, data = within(data_set, N &lt;- N), 
-                 iter = n_iter, verbose = FALSE, 
-                 pars = params, init = init_fun)
-## Warning: There were 12137 divergent transitions after warmup. Increasing
+                 iter = 5000, verbose = FALSE,
+                 pars = params)
+## Warning: There were 262 divergent transitions after warmup. Increasing
 ## adapt_delta may help.
-## Warning: There were 7500 transitions after warmup that exceeded the maximum
-## treedepth. Increase max_treedepth.
 ## Warning: Examine the pairs() plot to diagnose sampling problems
-sink()
 
 print(stan_fit)
-## Inference for Stan model: 88e79e39205893cc9462d1bb8813d017.
-## 4 chains, each with iter=10000; warmup=5000; thin=1; 
-## post-warmup draws per chain=5000, total post-warmup draws=20000.
+## Inference for Stan model: 94300128964927dd05c21f71824b95ab.
+## 4 chains, each with iter=5000; warmup=2500; thin=1; 
+## post-warmup draws per chain=2500, total post-warmup draws=10000.
 ## 
-##            mean  se_mean        sd       2.5%        25%      50%      75%
-## alpha      3.87     2.15      3.84       1.00       1.02     1.40     4.34
-## beta      13.98     6.23      9.67       1.94       4.23    17.27    22.24
-## sigma      0.20     0.08      0.14       0.04       0.05     0.15     0.34
-## lp__  -93408.87 76692.21 132667.56 -405037.66 -202521.34 -7089.27 -1777.55
-##        97.5% n_eff Rhat
-## alpha  13.09     3 3.35
-## beta   31.07     2 3.73
-## sigma   0.38     3 3.63
-## lp__  -10.96     3 2.51
+##           mean se_mean    sd     2.5%      25%      50%      75%    97.5%
+## alpha     1.08    0.00  0.10     0.93     1.01     1.07     1.14     1.33
+## beta      2.89    0.00  0.04     2.82     2.86     2.88     2.91     2.96
+## sigma     0.55    0.00  0.01     0.53     0.54     0.55     0.56     0.58
+## lp__  -1241.69    0.43 19.58 -1282.16 -1254.30 -1241.03 -1228.55 -1204.52
+##       n_eff Rhat
+## alpha  1771    1
+## beta   1217    1
+## sigma  5626    1
+## lp__   2089    1
 ## 
-## Samples were drawn using NUTS(diag_e) at Mon Oct 12 15:05:52 2015.
+## Samples were drawn using NUTS(diag_e) at Thu Oct 15 15:13:46 2015.
 ## For each parameter, n_eff is a crude measure of effective sample size,
 ## and Rhat is the potential scale reduction factor on split chains (at 
 ## convergence, Rhat=1).</code></pre>
